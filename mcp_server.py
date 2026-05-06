@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
-import json
+from flask import Flask, request, jsonify
 import os
-import sys
 from dotenv import load_dotenv
 import requests
 
@@ -10,75 +9,60 @@ load_dotenv()
 HUBSPOT_API_KEY = os.getenv("HUBSPOT_API_KEY")
 BASE_URL = "https://api.hubapi.com"
 
-def search_contacts(query):
-    response = requests.post(
-        f"{BASE_URL}/crm/v3/objects/contacts/search",
-        headers={"Authorization": f"Bearer {HUBSPOT_API_KEY}"},
-        json={"query": query, "limit": 50}
-    )
-    return response.json()
+app = Flask(__name__)
 
-def search_deals(dealstage):
-    response = requests.post(
-        f"{BASE_URL}/crm/v3/objects/deals/search",
-        headers={"Authorization": f"Bearer {HUBSPOT_API_KEY}"},
-        json={"filterGroups": [{"filters": [{"propertyName": "dealstage", "operator": "EQ", "value": dealstage}]}], "limit": 50}
-    )
-    return response.json()
-
-def process_request(request):
-    method = request.get("method")
-    
-    if method == "tools/list":
-        return {
-            "tools": [
-                {
-                    "name": "search_contacts",
-                    "description": "Search HubSpot contacts",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {"query": {"type": "string"}},
-                        "required": ["query"]
-                    }
-                },
-                {
-                    "name": "search_deals",
-                    "description": "Search HubSpot deals by stage",
-                    "inputSchema": {
-                        "type": "object",
-                        "properties": {"dealstage": {"type": "string"}},
-                        "required": ["dealstage"]
-                    }
+@app.route('/tools/list', methods=['POST'])
+def list_tools():
+    return jsonify({
+        "tools": [
+            {
+                "name": "search_contacts",
+                "description": "Search HubSpot contacts by name or email",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
                 }
-            ]
-        }
+            },
+            {
+                "name": "search_deals",
+                "description": "Search HubSpot deals by stage",
+                "inputSchema": {
+                    "type": "object",
+                    "properties": {"dealstage": {"type": "string"}},
+                    "required": ["dealstage"]
+                }
+            }
+        ]
+    })
+
+@app.route('/tools/call', methods=['POST'])
+def call_tool():
+    data = request.json
+    tool_name = data.get("name")
+    arguments = data.get("arguments", {})
     
-    elif method == "tools/call":
-        tool_name = request.get("params", {}).get("name")
-        arguments = request.get("params", {}).get("arguments", {})
-        
+    try:
         if tool_name == "search_contacts":
-            result = search_contacts(arguments.get("query"))
-        elif tool_name == "search_deals":
-            result = search_deals(arguments.get("dealstage"))
-        else:
-            result = {"error": f"Unknown tool: {tool_name}"}
+            response = requests.post(
+                f"{BASE_URL}/crm/v3/objects/contacts/search",
+                headers={"Authorization": f"Bearer {HUBSPOT_API_KEY}"},
+                json={"query": arguments.get("query"), "limit": 50}
+            )
+            return jsonify(response.json())
         
-        return {"result": result}
-    
-    return {"error": "Unknown method"}
+        elif tool_name == "search_deals":
+            response = requests.post(
+                f"{BASE_URL}/crm/v3/objects/deals/search",
+                headers={"Authorization": f"Bearer {HUBSPOT_API_KEY}"},
+                json={"filterGroups": [{"filters": [{"propertyName": "dealstage", "operator": "EQ", "value": arguments.get("dealstage")}]}], "limit": 50}
+            )
+            return jsonify(response.json())
+        
+        return jsonify({"error": f"Unknown tool: {tool_name}"})
+    except Exception as e:
+        return jsonify({"error": str(e)})
 
 if __name__ == "__main__":
-    while True:
-        try:
-            line = sys.stdin.readline()
-            if not line:
-                break
-            
-            request = json.loads(line)
-            response = process_request(request)
-            print(json.dumps(response))
-            sys.stdout.flush()
-        except Exception as e:
-            print(json.dumps({"error": str(e)}))
-            sys.stdout.flush()
+    port = int(os.getenv("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
